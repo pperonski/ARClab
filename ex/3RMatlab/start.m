@@ -36,7 +36,7 @@ Kd = 50 * eye(3);
 
 %define initial conditions for the manipulator
 init_qr_d1 = [0; 0; 0];
-init_qr = [0; 0; 0.0];
+init_qr = [0.0; 0.0; 0.0];
 
 qr1 = init_qr(1);
 qr2 = init_qr(2);
@@ -76,7 +76,7 @@ disp('Starting ...');
     ic(1:3) = init_qr_d1;
     ic(4:6) = init_qr;
     
-    modelName = 'modelODE';
+    modelName = 'modelODE_1';
     modelNameFun = str2func(modelName);
 
     opts = odeset('RelTol',1e-6,'AbsTol',1e-6);
@@ -102,6 +102,20 @@ disp('Starting ...');
     sim_data.out_qr_d1 = youtput(:,1:3);
     sim_data.out_qr_d0 = youtput(:,4:6);
 
+figure(Name="Manipulator joint positions")
+plot(sim_data.time,sim_data.out_qr_d0)
+legend("q1","q2","q3")
 
+figure(Name="Manipulator joint velocities")
+plot(sim_data.time,sim_data.out_qr_d1)
+legend("q1","q2","q3")
+
+figure(Name="Errors calculated as difference between real and desired end-effector trajectory")
+plot(sim_data.time,additional.k(1,:)-additional.qchd(1,:),sim_data.time,additional.k(2,:)-additional.qchd(2,:),sim_data.time,additional.k(3,:)-additional.qchd(3,:))
+legend("q1","q2","q3")
+
+figure(Name="Real vs. Desired trajectory in 3D")
+plot3(additional.k(1,:),additional.k(2,:),additional.k(3,:),additional.qchd(1,:),additional.qchd(2,:),additional.qchd(3,:))
+legend("real","trajectory")
 
 
