@@ -36,7 +36,7 @@ Kd = 50 * eye(3);
 
 %define initial conditions for the manipulator
 init_qr_d1 = [0; 0; 0];
-init_qr = [0.0; 0.0; 0.0];
+init_qr = [0.00001; 0.00001; 0.00001];
 
 qr1 = init_qr(1);
 qr2 = init_qr(2);

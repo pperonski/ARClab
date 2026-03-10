@@ -79,8 +79,6 @@ function [ output_args, additional ] = modelODE( t, input_args, parameters )
     %trajectory
     [qchd, qchd_d1, qchd_d2] = effectorTrajectoryGenerator3D(t, parameters);
 
-        MInv = M^-1;
-
     %     y'' = P - J M^-1 C q' + J M^-1 u
 
         detJ = det(J);
@@ -88,7 +86,14 @@ function [ output_args, additional ] = modelODE( t, input_args, parameters )
         % calculate F
         % F = P - J M^-1 C q' - J M^-1 D - J M^-1 T        
         % F = zeros(3,1);
-        invM = inv(M);
+
+        detM = det(M);
+        
+        if detM == 0
+            M = M + eye(3)*0.0001;
+        end
+
+        invM = M^-1;
 
         F = P - J*invM*C*q_d1 - J*invM*D - J*invM*T;
         %calculate G
@@ -115,11 +120,11 @@ function [ output_args, additional ] = modelODE( t, input_args, parameters )
         % calculate inverse of G as below
         % Ginv = G^-1;
         if detG == 0
-            G = G + eye(3)*0.0001
+            G = G + eye(3)*0.0001;
         end
         
 
-        Ginv = inv(G);
+        Ginv = G^-1;
 
         % calculate control input u
         % u = G^-1 * (v - F)
@@ -127,7 +132,7 @@ function [ output_args, additional ] = modelODE( t, input_args, parameters )
         u = Ginv *(v-F);
         
         % calculate state
-        qr_d2 = MInv * (B * u - C * q_d1 - D - T);   
+        qr_d2 = invM * (B * u - C * q_d1 - D - T);   
 
     dets = [detG; detJ];            
         
