@@ -132,11 +132,30 @@ class UnicycleModel(Model):
 
 def trajectory_generator_square(t, dt=1):
     if type(t) != np.ndarray:
-        # TODO: generate square trajectory
-        # with e.g. piece wise approach
-        h = np.array([0, 0])
-        h_d1 = np.array([0, 0])    
-        h_d2 = np.array([0, 0])
+        # Define the side length and duration of one side
+        L = 1.0
+        T_side = 1.0
+        T_total = 4 * T_side
+        
+        t_mod = t % T_total
+        
+        # Initialize vectors
+        h = np.array([0.0, 0.0])
+        h_d1 = np.array([0.0, 0.0])    
+        h_d2 = np.array([0.0, 0.0]) # Acceleration is zero along the lines
+
+        if t_mod < T_side:
+            h = np.array([t_mod, 0.0])
+            h_d1 = np.array([1.0, 0.0])
+        elif t_mod < 2 * T_side:
+            h = np.array([L, t_mod - T_side])
+            h_d1 = np.array([0.0, 1.0])
+        elif t_mod < 3 * T_side:
+            h = np.array([L - (t_mod - 2 * T_side), L])
+            h_d1 = np.array([-1.0, 0.0])
+        else:
+            h = np.array([0.0, L - (t_mod - 3 * T_side)])
+            h_d1 = np.array([0.0, -1.0])
     else:
         # do not change below code of this function
         h = np.zeros((2, len(t)))
@@ -151,8 +170,8 @@ def trajectory_generator_square(t, dt=1):
 def trajectory_generator_circle(t, w=np.pi * 0.4, offset=0.2, A=1.0):
     h = np.array([A*np.cos(t*w + offset), A*np.sin(t*w + offset)])
     # TODO: calculate first and second derivative
-    h_d1 = np.array([t, t])    
-    h_d2 = np.array([t, t])
+    h_d1 = np.array([-A*w*np.sin(t*w + offset), A*w*np.cos(t*w + offset)])    
+    h_d2 = np.array([-A*w*w*np.cos(t*w + offset), -A*w*w*np.sin(t*w + offset)])
     return h, h_d1, h_d2
 
 
@@ -206,8 +225,18 @@ class SimulatorDynamics(Simulator):
         # TODO: calculate partial derivative for dh/dq
         # h(q) diffeomorphism function was given during the 
         # lecture. It can be found also in Unicycle.h() method 
-        dh_dq = np.array([[1, 2, 3],
-                          [4, 5, 6]])
+        
+        # d x + e * np.cos(theta + delta) / dx = 1
+        # d x + e * np.cos(theta + delta) / dy = 0
+        # d x + e * np.cos(theta + delta) / dtheta = -e*np.sin(theta+delta)
+        
+        # d y + e * np.sin(theta + delta) / dx = 0
+        # d y + e * np.sin(theta + delta) / dy = 1
+        # d y + e * np.sin(theta + delta) / dtheta = e*np.cos(theta+delta)
+        
+        
+        dh_dq = np.array([[1, 0, -e*np.sin(q[2]+delta)],
+                          [0, 1, e*np.cos(q[2]+delta)]])
         Rinv = dh_dq @ G[0:3,:]
         detRinv = np.linalg.det(Rinv)
         
@@ -217,8 +246,9 @@ class SimulatorDynamics(Simulator):
         
         # TODO: Calculate k_d1, k' which will 
         # reflect system velocities q'
-        k_d1 = np.zeros((5))
-        
+        #k_d1 = np.zeros((5))
+        eta = R @ h_d1
+        k_d1 = G @ eta        
         q_d1 = k_d1.reshape((-1,))
         
         e = self._model.e
@@ -237,18 +267,18 @@ class SimulatorDynamics(Simulator):
         # expressed in auxiliary velocities
         # use lecture notes. Remember to use 
         # np.dot() or '@' to multiply matrices together
-        Ms = np.eye(2,2)
-        Cs = np.eye(2,2)
-        Bs = np.eye(2,2)
+        Ms = GT @ M @ G
+        Cs = GT @ M @ G_d1
+        Bs = GT @ B
         
         # TODO: calculate Mh, Ch and Bh
         # this matrices represent Unicycle's dynamics 
         # expressed in linearized coordinates
         # use lecture notes. Remember to use 
         # np.dot() or '@' to multiply matrices together        
-        Mh = np.eye(2,2)
-        Ch = np.eye(2,2)
-        Bh = np.eye(2,2)
+        Mh = Ms @ R
+        Ch = Ms @ R_d1 + Cs @ R
+        Bh = Bs
         
         hd, hd_d1, hd_d2 = self._trajectory(t)
         
@@ -259,16 +289,23 @@ class SimulatorDynamics(Simulator):
         Kd = 20
         
         # TODO: calculate errors and theirs first derivative
-        eh = np.zeros((2))
-        eh_d1 = np.zeros((2))   
+        #eh = np.zeros((2))
+        #eh_d1 = np.zeros((2))  
+        
+        eh = hd - h
+        eh_d1 = hd_d1 - h_d1 
         
         # TODO: introduce new input to the system
-        v = np.zeros((2))       
+        # v = np.zeros((2))    
+        v = hd_d2 + Kd * eh_d1 + Kp * eh   
         # TODO: calculate control signals
-        u = np.zeros((2))
+        # u = np.zeros((2))
+        Bhinv = np.linalg.inv(Bh)
+        u = Bhinv @ (Mh @ v + Ch @ h_d1)
         
         # TODO calculate h second derivative, h''(q)
-        h_d2 = np.zeros((2))
+        # h_d2 = np.zeros((2))
+        h_d2 = v
         
         new_state = np.concatenate([h_d1, h_d2, k_d1])
         
@@ -309,12 +346,19 @@ class SimulatorKinematics(Simulator):
         detR = np.linalg.det(R)
         
         hd, hd_d1, _ = self._trajectory(t)
-        eh = np.zeros((2))
+        # eh = np.zeros((2))
+        eh = hd - h
         
         # TODO: some calculations
         
-        h_d1 = np.zeros((2))        
+        Kp = 5.0
+        h_d1 = hd_d1 + Kp * eh
+        
+        # h_d1 = np.zeros((2))        
         k_d1 = np.zeros((5))
+        
+        eta = R @ h_d1
+        k_d1 = G @ eta
         
         h_d2 = np.array([0, 0])        
         new_state = np.concatenate([h_d1, h_d2, k_d1])
