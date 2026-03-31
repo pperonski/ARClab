@@ -1,10 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from staticLin import SimulatorDynamics, SimulatorKinematics, UnicycleModel, trajectory_generator_circle, trajectory_generator_square
+from staticLin import SimulatorDynamics, SimulatorKinematics, UnicycleModel, trajectory_generator_circle, trajectory_generator_hexagon, trajectory_generator_square
 
 def main():
-    start = np.array([0.1, 0.1, np.pi/2*0.1, 0, 0])
+    start = np.array([0.1, 0.1, np.pi, 0, 0])
     dt = 0.01
     model = UnicycleModel(state=start, dt=dt)
     simulator = SimulatorDynamics
@@ -15,9 +15,11 @@ def main():
     initial_condition = np.concatenate([h, h_d1, start])
     
     # TODO chose trajectory generator
-    trajectory_generator = trajectory_generator_circle
+    # trajectory_generator = trajectory_generator_circle
+    # trajectory_generator = trajectory_generator_square
+    trajectory_generator = trajectory_generator_hexagon
 
-    stats, solver = sim.run(initial_condition, 6, dt, trajectory_generator)
+    stats, solver = sim.run(initial_condition, 10, dt, trajectory_generator)
     stats = {'t': solver['t'],
              'h': solver['y'][0:2],
              'h_d1': solver['y'][2:4],

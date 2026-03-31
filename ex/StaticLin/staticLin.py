@@ -166,6 +166,43 @@ def trajectory_generator_square(t, dt=1):
         
     return h, h_d1, h_d2
 
+def trajectory_generator_hexagon(t, L=1.0, T_side=1.0):
+    """
+    Generates a hexagonal path.
+    L: Length of each side
+    T_side: Time taken to traverse one side
+    """
+    if not isinstance(t, np.ndarray):
+        T_total = 6 * T_side
+        t_mod = t % T_total
+        
+        side_index = int(t_mod // T_side)
+        tau = t_mod % T_side
+        
+        angle = side_index * (np.pi / 3)
+        
+        direction = np.array([np.cos(angle), np.sin(angle)])
+        
+        start_pos = np.array([0.0, 0.0])
+        for i in range(side_index):
+            prev_angle = i * (np.pi / 3)
+            start_pos += L * np.array([np.cos(prev_angle), np.sin(prev_angle)])
+            
+        velocity_mag = L / T_side
+        h = start_pos + direction * velocity_mag * tau
+        h_d1 = direction * velocity_mag
+        h_d2 = np.array([0.0, 0.0])
+        
+    else:
+        # Boilerplate for handling array inputs as per your script's structure
+        h = np.zeros((2, len(t)))
+        h_d1 = np.zeros((2, len(t)))
+        h_d2 = np.zeros((2, len(t)))
+        for i in range(len(t)):
+            h[:,i], h_d1[:,i], h_d2[:,i] = trajectory_generator_hexagon(t[i], L, T_side)
+            
+    return h, h_d1, h_d2
+
 
 def trajectory_generator_circle(t, w=np.pi * 0.4, offset=0.2, A=1.0):
     h = np.array([A*np.cos(t*w + offset), A*np.sin(t*w + offset)])
@@ -216,7 +253,6 @@ class SimulatorDynamics(Simulator):
         
         e = self._model.e
         delta = self._model.delta
-        
         self._model.state = q
         M = self._model.M
         B = self._model.B
@@ -233,10 +269,10 @@ class SimulatorDynamics(Simulator):
         # d y + e * np.sin(theta + delta) / dx = 0
         # d y + e * np.sin(theta + delta) / dy = 1
         # d y + e * np.sin(theta + delta) / dtheta = e*np.cos(theta+delta)
+        theta = q[2]
         
-        
-        dh_dq = np.array([[1, 0, -e*np.sin(q[2]+delta)],
-                          [0, 1, e*np.cos(q[2]+delta)]])
+        dh_dq = np.array([[1, 0, -e*np.sin(theta+delta)],
+                          [0, 1, e*np.cos(theta+delta)]])
         Rinv = dh_dq @ G[0:3,:]
         detRinv = np.linalg.det(Rinv)
         
@@ -276,35 +312,56 @@ class SimulatorDynamics(Simulator):
         # expressed in linearized coordinates
         # use lecture notes. Remember to use 
         # np.dot() or '@' to multiply matrices together        
-        Mh = Ms @ R
-        Ch = Ms @ R_d1 + Cs @ R
-        Bh = Bs
+        Mh = RT@Ms @ R
+        Ch = RT@(Ms @ R_d1 + Cs @ R)
+        Bh = RT@Bs
         
         hd, hd_d1, hd_d2 = self._trajectory(t)
         
         Mhinv = np.linalg.inv(Mh)
         Bhinv = np.linalg.inv(Bh)
         
+        Gh = Mhinv@Bh
+        
+        Ghinv = np.linalg.inv(Gh)
+        
         Kp = 200
         Kd = 20
         
         # TODO: calculate errors and theirs first derivative
-        #eh = np.zeros((2))
-        #eh_d1 = np.zeros((2))  
+        # eh = np.zeros((2))
+        # eh_d1 = np.zeros((2))  
         
         eh = hd - h
         eh_d1 = hd_d1 - h_d1 
         
         # TODO: introduce new input to the system
         # v = np.zeros((2))    
-        v = hd_d2 + Kd * eh_d1 + Kp * eh   
+        v = hd_d2 + Kd * eh_d1 + Kp * eh  
+        # v = np.zeros((2))
+        
         # TODO: calculate control signals
+        # Isn't u kinda useless here?
+        # since after we inject u into 
+        # equations it is simplified into
+        # h_d2 = v
+        
+        # Fh = -Mhinv@Ch@h_d1
+        
         # u = np.zeros((2))
-        Bhinv = np.linalg.inv(Bh)
-        u = Bhinv @ (Mh @ v + Ch @ h_d1)
+        # u = np.array([1.0, 1.0])
+        # Bhinv = np.linalg.inv(Bh)
+        # u = Bhinv @ (Mh @ v + Ch @ h_d1)
+        # u = np.zeros((2))
+        # u = Ghinv@(v-Fh)
+        
+        # Fh = -Mhinv@Ch@q_d1
+        
+        # u = Ghinv@(v-Fh)
         
         # TODO calculate h second derivative, h''(q)
         # h_d2 = np.zeros((2))
+        # h_d2 = Fh - Gh@u
         h_d2 = v
         
         new_state = np.concatenate([h_d1, h_d2, k_d1])
@@ -337,8 +394,10 @@ class SimulatorKinematics(Simulator):
         self._model.state = q
         G = self._model.G
         
-        dh_dq = np.array([[1, 2, 3],
-                          [4, 5, 6]])
+        theta = q[2]
+        
+        dh_dq = np.array([[1, 0, -e*np.sin(theta+delta)],
+                          [0, 1, e*np.cos(theta+delta)]])
         Rinv = dh_dq @ G[0:3,:]
         detRinv = np.linalg.det(Rinv)
         
@@ -350,17 +409,15 @@ class SimulatorKinematics(Simulator):
         eh = hd - h
         
         # TODO: some calculations
-        
         Kp = 5.0
         h_d1 = hd_d1 + Kp * eh
         
-        # h_d1 = np.zeros((2))        
-        k_d1 = np.zeros((5))
-        
         eta = R @ h_d1
-        k_d1 = G @ eta
+        k_d1 = G @ eta  
+        # h_d1 = np.zeros((2))        
+        # k_d1 = np.zeros((5))
         
-        h_d2 = np.array([0, 0])        
+        h_d2 = np.array([0.1, 0.1])        
         new_state = np.concatenate([h_d1, h_d2, k_d1])
         
         if t >= self._stats['next']:
