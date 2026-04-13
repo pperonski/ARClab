@@ -113,7 +113,7 @@ class Circle(Obstacle):
 
     def distance(self, point: np.array):
         # TODO calculate distance to the center of circular obstacle
-        distance = 0
+        distance = np.sqrt(np.sum((self._center - point[0:2])**2))
         return distance
     
     def _inside(self, point: np.array, radius):
@@ -186,7 +186,26 @@ class Rectangle(Obstacle):
         # check if there is collision with the rectangle
         # for this you can use points, center of the rectangle 
         # or other technique
-
+        
+        # Detect whether lines cross with x or y axis 
+        # and use it to determine if the point is inside the rectangle
+        lines = [
+            [self._points[0,:], self._points[1,:]],
+            [self._points[1,:], self._points[2,:]],
+            [self._points[2,:], self._points[3,:]],
+            [self._points[3,:], self._points[0,:]]
+        ]
+        
+        for line in lines:
+            # check whther point is between y values of line endpoints
+            if (line[0][1] <= point[1] <= line[1][1]) or (line[1][1] <= point[1] <= line[0][1]):
+                if line[0][1] != line[1][1]: # avoid division by zero
+                    # x point intersection of the line
+                    x_cross = line[0][0] + (point[1] - line[0][1]) * (line[1][0] - line[0][0]) / (line[1][1] - line[0][1])
+                    if x_cross > point[0]:
+                        distance = min(distance, abs(x_cross - point[0]))
+                        return True, distance
+        
         return False, distance
     
     def inside(self, point: np.array):
@@ -368,7 +387,7 @@ class MPC:
                 # TODO: 4. evaluate possible collision with obstacles
                 is_inside, dist_to_obs = obstacle.inside_safe(state)
                 if is_inside:
-                    cost += 0.25 * (1.0 / (dist_to_obs + 1e-6))
+                    cost += 10.0 * (1.0 / (dist_to_obs + 1e-6))
                 
         return cost
     
