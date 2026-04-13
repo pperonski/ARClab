@@ -46,6 +46,9 @@ class UnicycleModel(Model):
     def step(self, u: np.array):
         # TODO given current state (self._state) and control inputs u
         # evaluate new state after time self._dt
+        K = np.array([[np.cos(self.state[2]), 0], [np.sin(self.state[2]), 0], [0, 1]])
+        dx = np.matmul(K, u)
+        self._state = self._state + dx * self._dt
         
         return self._state
         
@@ -63,6 +66,10 @@ class AckermanModel(Model):
     def step(self, u: np.array):
         # TODO given current state (self._state) and control inputs u
         # evaluate new state after time self._dt
+        x_dot = u[0] * np.cos(self.state[2])
+        y_dot = u[0] * np.sin(self.state[2])
+        theta_dot = u[0] * np.tan(u[1]) / self.l
+        self._state = self._state + np.array([x_dot, y_dot, theta_dot]) * self._dt
         
         return self._state
         
@@ -265,28 +272,31 @@ class MPC:
                 bounds=bounds)
             # TODO
             # 1. Append m first points from the optimization solution
-            # to the solution list
+            # to the solution list   
+            ctrl_now = result.x[:m]
+            solution.append(ctrl_now)         
             
-            
-            # 2. Update model's state with current state
-            
+            # 2. Update model's state with current state 
+            self.model.state = self.model_state          
             
             # 3. Calculate next state of the model given 
             # latest control signals (at the end of solution list
             # which was updated in point 1.
-            
+            self.model.step(ctrl_now)
+            state = self.model.state
             
             # 4. Save new state as new point on path
             # Append it to path list
-            
+            path.append(state)
             
             # 5. Preserve last vector of control input by
             # removing first m values from optimization result and 
             # assigning it to control input list u
-            
+            u = result.x[m:]
             
             # 6. Extend control input list with m  
             # values, e.g. with m zeros
+            u = np.append(u, np.zeros(m))
             
             # Statistics
             diff = state[0:2] - goal[0:2]
@@ -336,18 +346,29 @@ class MPC:
             # iterate new state of the model
             # TODO: 1. run step on the model 
             # providing control signals
+            ctrl = u[i*m : (i+1)*m]
+            state = self.model.step(ctrl)
             
             # calculate distance to the goal
             # TODO: 2. calculate distance to goal based on 
             # newly evaluated state, and evaluate angle difference 
             # between current orientation and goal orientation
+            diff = state[0:2] - self._goal[0:2]
+            dist_to_goal = np.sqrt(np.sum(diff**2))
+            
+            angle_diff = abs(np.arctan2(np.sin(state[2] - self._goal[2]), 
+                                    np.cos(state[2] - self._goal[2])))
             
             # TODO: 3. using the distance to goal 
             # calculate cost and add it to overall 'cost'
+            cost += 5 * dist_to_goal**2
+            cost += 4 * angle_diff**2
             
             for obstacle in self._obstacles:
-                pass
                 # TODO: 4. evaluate possible collision with obstacles
+                is_inside, dist_to_obs = obstacle.inside_safe(state)
+                if is_inside:
+                    cost += 0.25 * (1.0 / (dist_to_obs + 1e-6))
                 
         return cost
     
