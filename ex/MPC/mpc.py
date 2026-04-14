@@ -159,9 +159,8 @@ class MassDamperSpringModel(Model):
         x_dot = self._state[1]
         x = self._state[0]
         x_ddot = (u[0] - self.c * x_dot - self.k * x) / self.m_mass
-        new_state = self._state + np.array([x_dot, x_ddot]) * self._dt
-        
-        return new_state
+        self._state = self._state + np.array([x_dot, x_ddot]) * self._dt        
+        return self._state
         
     @property
     def m(self):
@@ -214,20 +213,24 @@ class Rectangle(Obstacle):
         # Detect whether lines cross with x or y axis 
         # and use it to determine if the point is inside the rectangle
         lines = [
-            [self._points[0,:], self._points[1,:]],
-            [self._points[1,:], self._points[2,:]],
-            [self._points[2,:], self._points[3,:]],
-            [self._points[3,:], self._points[0,:]]
+            [self._points[0], self._points[1]],
+            [self._points[1], self._points[2]],
+            [self._points[2], self._points[3]],
+            [self._points[3], self._points[0]]
         ]
         
         for line in lines:
-            # check whther point is between y values of line endpoints
-            if (line[0][1] <= point[1] <= line[1][1]) or (line[1][1] <= point[1] <= line[0][1]):
-                if line[0][1] != line[1][1]: # avoid division by zero
-                    # x point intersection of the line
-                    x_cross = line[0][0] + (point[1] - line[0][1]) * (line[1][0] - line[0][0]) / (line[1][1] - line[0][1])
-                    if x_cross > point[0]:
-                        distance = min(distance, abs(x_cross - point[0]))
+            x1, y1 = line[0]
+            x2, y2 = line[1]
+            if (y1 <= point[1] <= y2) or (y2 <= point[1] <= y1):
+                if x1 == x2:
+                    if abs(point[0] - x1) <= margin:
+                        return True, distance
+                else:
+                    slope = (y2 - y1) / (x2 - x1)
+                    intercept = y1 - slope * x1
+                    x_intersect = (point[1] - intercept) / slope
+                    if abs(point[0] - x_intersect) <= margin:
                         return True, distance
         
         return False, distance
@@ -271,7 +274,7 @@ class MPC:
         self._obstacles = []
         self._stats = {}
         
-    def run(self, start: np.array, goal: np.array, obstacles = [], maxiter=100):
+    def run(self, start: np.array, goal: np.array = None, obstacles = [], maxiter=100, desired_trajectory=None):
         """Run MPC algorithm
 
         Args:
@@ -286,22 +289,30 @@ class MPC:
         """
         n = int(self.T / self.dt)
         u = np.zeros((n, self.model.m))
-        self._goal = goal
+        self._desired_trajectory = desired_trajectory
+        self._current_time = 0.0
         solution = []
         solution.append(u)
         path = []
         path.append(start)
         
-        stats = {'step': [0], 'robot': [start], 'goal': goal, 'dt': self.dt, 
-                 'distance': [0], 'angle': [0],
-                 'cost': [0]}
-        
         self._obstacles = obstacles
+        m = self.model.m
         
-        m = self.model.m        
-        # define bounds for control signals, upper and lower limit
-        bounds = Bounds([-1, -0.5]*int(n//m), [1, 0.5]*int(n//m))
-        
+        if desired_trajectory is not None:
+            cost_fn = self.cost_trajectory
+            bounds = Bounds([-10]*n, [10]*n)
+            stats = {'step': [0], 'robot': [start.copy()], 'dt': self.dt,
+                     'error': [start[0] - desired_trajectory(0)],
+                     'cost': [0]}
+        else:
+            self._goal = goal
+            cost_fn = self.cost
+            bounds = Bounds([-1, -0.5]*int(n//m), [1, 0.5]*int(n//m))
+            stats = {'step': [0], 'robot': [start], 'goal': goal, 'dt': self.dt, 
+                     'distance': [0], 'angle': [0],
+                     'cost': [0]}
+                
         state = start
         u = [0]*n
         
@@ -310,7 +321,7 @@ class MPC:
         
         for i in range(1, maxiter):
             self.model_state = state
-            result = minimize(self.cost, u, method='SLSQP',
+            result = minimize(cost_fn, u, method='SLSQP',
                 constraints=[], options={'ftol': 1e-3, 'disp': False},
                 bounds=bounds)
             # TODO
@@ -342,22 +353,33 @@ class MPC:
             u = np.append(u, np.zeros(m))
             
             # Statistics
-            diff = state[0:2] - goal[0:2]
-            distance = np.sqrt(np.dot(diff, diff))
-            angle = (state[2] - goal[2]) / np.pi * 180
-            stats['step'].append(i)
-            stats['cost'].append(result.fun)
-            stats['robot'].append(state)
-            stats['distance'].append(distance)
-            stats['angle'].append(angle)
-            print(f"Step {i:05d}, cost {result.fun:.2f}\n"
-                  f"robot: {state}, goal: {goal}\n"
-                  f"distance: {distance:.2f}, angle diff: {angle:.2f}")
+            if desired_trajectory is not None:
+                self._current_time += self.dt
+                desired = desired_trajectory(self._current_time)
+                error = state[0] - desired
+                stats['step'].append(i)
+                stats['cost'].append(result.fun)
+                stats['robot'].append(state.copy())
+                stats['error'].append(error)
+                print(f"t: {self._current_time:.2f}, Step {i:05d}, cost {result.fun:.4f}, "
+                      f"x: {state[0]:.4f}, desired: {desired:.4f}, error: {error:.4f}")
+            else:
+                diff = state[0:2] - goal[0:2]
+                distance = np.sqrt(np.dot(diff, diff))
+                angle = (state[2] - goal[2]) / np.pi * 180
+                stats['step'].append(i)
+                stats['cost'].append(result.fun)
+                stats['robot'].append(state)
+                stats['distance'].append(distance)
+                stats['angle'].append(angle)
+                print(f"t: {i * self.dt:.2f}, Step {i:05d}, cost {result.fun:.2f}\n"
+                      f"robot: {state}, goal: {goal}\n"
+                      f"distance: {distance:.2f}, angle diff: {angle:.2f}")
             
             # If the cost function is not dropping faster 
             # than some given value terminate calculation
             cost_diff = np.abs(previous_cost - result.fun)
-            if cost_diff < 0.01:
+            if desired_trajectory is None and cost_diff < 0.01:
                 print("Early stop")
                 earlyStop = i
                 break
@@ -367,7 +389,36 @@ class MPC:
         # and path (robot poses) and stats
         self._stats = stats
         return solution, path, stats 
+    
+    def cost_trajectory(self, u: np.array) -> float:
+        """Calculates cost function for trajectory tracking
+
+        Args:
+            u (np.array): Control signals
+
+        Returns:
+            float: Value of cost function
+        """
+        self.model.state = self.model_state
+        m = self.model.m
+        steps = len(u) // m
+        cost = 0
+        for i in range(steps):
+            # TODO: 1. run step on the model providing control signals
+            ctrl = u[i*m : (i+1)*m]
+            state = self.model.step(ctrl)
             
+            # TODO: 2. evaluate time at prediction step i
+            t = self._current_time + (i + 1) * self.dt
+            
+            # TODO: 3. get desired position from self._desired_trajectory(t)
+            # and calculate tracking error (state[0] - desired)
+            desired = self._desired_trajectory(t)
+            diff = state[0] - desired
+            
+            # TODO: 4. add squared error to cost
+            cost += np.mean(diff**2)
+        return cost
         
     def cost(self, u: np.array) -> float:
         """Calculates cost function at given time
@@ -404,14 +455,14 @@ class MPC:
             
             # TODO: 3. using the distance to goal 
             # calculate cost and add it to overall 'cost'
-            cost += 5 * dist_to_goal**2
-            cost += 4 * angle_diff**2
+            cost += 1 * dist_to_goal**2
+            cost += 1 * angle_diff**2
             
             for obstacle in self._obstacles:
-                # TODO: 4. evaluate possible collision with obstacles
+            # TODO: 4. evaluate possible collision with obstacles
                 is_inside, dist_to_obs = obstacle.inside_safe(state)
                 if is_inside:
-                    cost += 10.0 * (1.0 / (dist_to_obs + 1e-6))
+                    cost += 1.0 * (1.0 / (dist_to_obs + 1e-6))
                 
         return cost
     
@@ -546,5 +597,45 @@ class MPC:
                             repeat = repeat)
         if animationFile:
             animation.save(animationFile, fps=1)
+        plt.show()
+        
+    def plot_mds(self, path, stats, desired_trajectory=None):
+        """Plot mass-damper-spring system response
+
+        Args:
+            path (list): List containing system states [x, x']
+            stats (dict): Statistics dictionary from run()
+            desired_trajectory (callable, optional): Desired trajectory function
+        """
+        path = np.array(path)
+        time = np.array(stats['step']) * stats['dt']
+        
+        fig, axes = plt.subplots(3, 1, figsize=(10, 8))
+        
+        # Position
+        axes[0].plot(time, path[:, 0], 'b-', label='Position x')
+        if desired_trajectory is not None:
+            desired = [desired_trajectory(t) for t in time]
+            axes[0].plot(time, desired, 'r--', label='Desired')
+        axes[0].set_ylabel('Position')
+        axes[0].legend()
+        axes[0].grid(True)
+        axes[0].set_title('Mass-Damper-Spring MPC')
+        
+        # Velocity
+        axes[1].plot(time, path[:, 1], 'b-', label="Velocity x'")
+        axes[1].set_ylabel('Velocity')
+        axes[1].legend()
+        axes[1].grid(True)
+        
+        # Tracking error
+        if 'error' in stats:
+            axes[2].plot(time, stats['error'], 'r-', label='Tracking error')
+            axes[2].set_ylabel('Error')
+            axes[2].legend()
+        axes[2].set_xlabel('Time [s]')
+        axes[2].grid(True)
+        
+        plt.tight_layout()
         plt.show()
             
