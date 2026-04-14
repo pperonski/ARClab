@@ -143,6 +143,30 @@ class Circle(Obstacle):
     def radius_safe(self):
         return self._radius + self._safe_margin
     
+class MassDamperSpringModel(Model):
+    def __init__(self, state: np.array, dt: float, m_mass: float, c: float, k: float) -> None:
+        # state is [x, x'] (position, velocity)
+        # m_mass*x'' + c*x' + k*x = u
+        super().__init__(state, dt)
+        self.m_mass = m_mass   # mass
+        self.c = c             # damping coefficient
+        self.k = k             # spring stiffness
+    
+    def step(self, u: np.array):
+        # TODO given current state (self._state) and control input u
+        # evaluate new state after time self._dt
+        # State: [x, x_dot]
+        x_dot = self._state[1]
+        x = self._state[0]
+        x_ddot = (u[0] - self.c * x_dot - self.k * x) / self.m_mass
+        new_state = self._state + np.array([x_dot, x_ddot]) * self._dt
+        
+        return new_state
+        
+    @property
+    def m(self):
+        return 1
+    
 class Rectangle(Obstacle):
     
     def __init__(self, center: np.array, width=1, height=0.5, orientationDeg = 0, **kwargs) -> None:
