@@ -12,7 +12,7 @@ mx.scratch
 Backup
 *.bak
 .mxproject
-
+build
 .vscode
 
 # Conversion files
