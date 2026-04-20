@@ -320,6 +320,12 @@ class MPC:
         earlyStop = -1
         
         for i in range(1, maxiter):
+            if callable(goal):
+                t = self._current_time
+                _goal = goal(t)
+            else:
+                _goal = goal
+                        
             self.model_state = state
             result = minimize(cost_fn, u, method='SLSQP',
                 constraints=[], options={'ftol': 1e-3, 'disp': False},
@@ -332,7 +338,7 @@ class MPC:
             
             # 2. Update model's state with current state 
             self.model.state = self.model_state          
-            
+                        
             # 3. Calculate next state of the model given 
             # latest control signals (at the end of solution list
             # which was updated in point 1.
@@ -364,25 +370,26 @@ class MPC:
                 print(f"t: {self._current_time:.2f}, Step {i:05d}, cost {result.fun:.4f}, "
                       f"x: {state[0]:.4f}, desired: {desired:.4f}, error: {error:.4f}")
             else:
-                diff = state[0:2] - goal[0:2]
+                self._current_time += self.dt
+                diff = state[0:2] - _goal[0:2]
                 distance = np.sqrt(np.dot(diff, diff))
-                angle = (state[2] - goal[2]) / np.pi * 180
+                angle = (state[2] - _goal[2]) / np.pi * 180
                 stats['step'].append(i)
                 stats['cost'].append(result.fun)
                 stats['robot'].append(state)
                 stats['distance'].append(distance)
                 stats['angle'].append(angle)
                 print(f"t: {i * self.dt:.2f}, Step {i:05d}, cost {result.fun:.2f}\n"
-                      f"robot: {state}, goal: {goal}\n"
+                      f"robot: {state}, goal: {_goal}\n"
                       f"distance: {distance:.2f}, angle diff: {angle:.2f}")
             
             # If the cost function is not dropping faster 
             # than some given value terminate calculation
             cost_diff = np.abs(previous_cost - result.fun)
-            if desired_trajectory is None and cost_diff < 0.01:
-                print("Early stop")
-                earlyStop = i
-                break
+            # if desired_trajectory is None and cost_diff < 0.01:
+            #     print("Early stop")
+            #     earlyStop = i
+            #     break
             previous_cost = result.fun
             
         # returning solution (list of control inputs)
@@ -443,26 +450,31 @@ class MPC:
             ctrl = u[i*m : (i+1)*m]
             state = self.model.step(ctrl)
             
+            if callable(self._goal):
+                t = self._current_time + (i + 1) * self.dt
+                goal = self._goal(t)
+            else:
+                goal = self._goal
+            
             # calculate distance to the goal
             # TODO: 2. calculate distance to goal based on 
             # newly evaluated state, and evaluate angle difference 
             # between current orientation and goal orientation
-            diff = state[0:2] - self._goal[0:2]
+            diff = state[0:2] - goal[0:2]
             dist_to_goal = np.sqrt(np.sum(diff**2))
             
-            angle_diff = abs(np.arctan2(np.sin(state[2] - self._goal[2]), 
-                                    np.cos(state[2] - self._goal[2])))
+            angle_diff = abs(state[2] - goal[2])
             
             # TODO: 3. using the distance to goal 
             # calculate cost and add it to overall 'cost'
-            cost += 1 * dist_to_goal**2
-            cost += 1 * angle_diff**2
+            cost += 10 * dist_to_goal**2
+            cost += 1 * angle_diff
             
             for obstacle in self._obstacles:
             # TODO: 4. evaluate possible collision with obstacles
                 is_inside, dist_to_obs = obstacle.inside_safe(state)
                 if is_inside:
-                    cost += 1.0 * (1.0 / (dist_to_obs + 1e-6))
+                    cost += 3.0 * (1.0 / (dist_to_obs + 1e-6))
                 
         return cost
     
@@ -485,6 +497,7 @@ class MPC:
         line_collision, = ax.plot([], [], 'ko')
         line_vector = ax.quiver([0], [0], [0], [0], angles='xy', scale=1, scale_units='xy')
         line_stats = ax.text(-0.8,1.4, "Statistics")
+        
         ax.plot(goal[0], goal[1], 'bx')
         ax.quiver(goal[0], goal[1], np.cos(goal[2]) * 0.5, np.sin(goal[2]) * 0.5, angles='xy', scale=1, scale_units='xy')
         ax.grid('both')

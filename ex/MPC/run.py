@@ -4,21 +4,28 @@ import matplotlib.pyplot as plt
 
 from mpc import MPC, UnicycleModel, AckermanModel, Circle, Rectangle, MassDamperSpringModel
 
+def goal_circle(t):
+    w = 0.05
+    angle = w*t
+    r = 1.0
+    
+    return np.array([r*np.cos(angle)+1, r*np.sin(angle), angle + np.pi/2 ])
+
 def main():
     start = np.array([0, 0, 0])
     goal = np.array([3.0, 1.0, 0.2])
-    # model = UnicycleModel(np.zeros((3, 1)), 0.1, 0.05, 0.06)
+    model = UnicycleModel(np.zeros((3, 1)), 0.5, 0.05, 0.06)
     # TODO Ackerman model
-    model = AckermanModel(np.zeros((3, 1)), 0.15, 0.06)
+    # model = AckermanModel(np.zeros((3, 1)), 0.15, 0.06)
     dt = 0.5
-    mpc = MPC(model, 20, dt)
+    mpc = MPC(model, 50, dt)
     print("Calculating trajectory")
     path = []
     obstacles = []
     # TODO obstacles
     # obstacles.append(Circle(np.array([1.2, 0.2]), radius=0.1, safe_margin=0.2))
-    obstacles.append(Rectangle(np.array([1.2, 0.2]), width=0.5, height=0.5, orientationDeg=45, safe_margin=0.2))
-    solution, path, _ = mpc.run(start, goal, obstacles=obstacles)
+    # obstacles.append(Rectangle(np.array([1.2, 0.2]), width=0.5, height=0.5, orientationDeg=45, safe_margin=0.2))
+    solution, path, _ = mpc.run(start, goal_circle, obstacles=obstacles,maxiter=400)
     
     print("Solution")
     np.set_printoptions(precision=4)
