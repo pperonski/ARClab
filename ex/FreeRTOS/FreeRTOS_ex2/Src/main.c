@@ -18,13 +18,18 @@
  */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
+#include "stdio.h"
 #include "main.h"
+#include "cmsis_os.h"
 #include "adc.h"
 #include "dma.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
+#include "FreeRTOS.h"
+#include "semphr.h"
+#include "queue.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -56,12 +61,20 @@
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+typedef struct {
+    uint16_t measurement;
+    uint32_t counter;
+} queue_data_t;
+
+QueueHandle_t mailbox;
 
 enum QueueStatus {
 	QueueOK, QueueWriteProblem, QueueEmpty, QueueCantRead
@@ -83,23 +96,111 @@ void measureTask(void *args) {
 	xLastWakeTime = xTaskGetTickCount();
 
 	for (;;) {
+    BaseType_t xStatus = xQueueSendToBack(queue, &measurement, 0);
 
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (xStatus == pdPASS) {
+            queueError = QueueOK;
+        } else {
+            queueError = QueueWriteProblem;
+        }
+        xSemaphoreGive(mutex);
+    }
+
+    vTaskDelayUntil(&xLastWakeTime, 300/portTICK_PERIOD_MS);
 	}
+}
+
+void measureTask_1(void *args) {
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    uint32_t internal_counter = 0;
+    queue_data_t data_to_send;
+
+    for (;;) {
+        internal_counter++;
+        
+        data_to_send.measurement = measurement;
+        data_to_send.counter = internal_counter;
+
+        xQueueOverwrite(mailbox, &data_to_send);
+
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1000));
+    }
 }
 
 void commTask(void *args) {
 	TickType_t xLastWakeTime;
-	uint16_t measurement_local = 0;
-	uint16_t flag_local;
-	uint16_t histeresis = 0;
-	BaseType_t queue_size;
-	BaseType_t xStatus;
+  uint16_t measurement_local = 0;
+  uint16_t flag_local;
+  uint16_t histeresis = 500; // Initialize with the slow period (500ms)
+  BaseType_t queue_size;
+  BaseType_t xStatus;
 
-	xLastWakeTime = xTaskGetTickCount();
+  xLastWakeTime = xTaskGetTickCount();
 
-	for (;;) {
+  for (;;) {
+    queue_size = uxQueueMessagesWaiting(queue);
 
-	}
+    if (queue_size > 12) {
+      histeresis = 100; // Switch to fast mode
+    } else if (queue_size < 4) {
+      histeresis = 500; // Switch to slow mode
+    }
+    // Note: if queue_size is between 4 and 12, 'histeresis' remains unchanged
+
+    xStatus = xQueueReceive(queue, &measurement_local, 0);
+
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      if (xStatus == pdPASS) {
+        queueError = QueueOK;
+      } else {
+        if (queue_size == 0) {
+          queueError = QueueEmpty;
+        } else {
+          queueError = QueueCantRead;
+        }
+      }
+      flag_local = queueError;
+      xSemaphoreGive(mutex);
+    }
+
+    printf("time: %5lu, measured value: %4u, queue size %2u, error %u\r\n",
+           xTaskGetTickCount(), 
+           measurement_local, 
+           (unsigned int)queue_size, 
+           flag_local);
+
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(histeresis));
+  }
+}
+
+void commTask_1(void *args) {
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    queue_data_t local_data;
+    uint32_t last_seen_counter = 0;
+
+    for (;;) {
+        if (xQueuePeek(mailbox, &local_data, 0) == pdPASS) {
+            
+            if (local_data.counter > last_seen_counter) {
+                printf("time: %5lu, measured value: %4u, counter: %3lu\r\n",
+                       xTaskGetTickCount(), local_data.measurement, local_data.counter);
+                last_seen_counter = local_data.counter;
+            } else {
+                printf("No new data\r\n");
+            }
+            
+        } else {
+            printf("Queue empty\r\n");
+        }
+
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(400));
+    }
+}
+
+int _write(int file, char *ptr, int len) {
+    HAL_UART_Transmit(&huart2, (uint8_t *) ptr, len, 50);
+    return len;
 }
 
 /* USER CODE END 0 */
@@ -110,6 +211,7 @@ void commTask(void *args) {
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -149,14 +251,43 @@ int main(void)
 
 	// --> start FreeRTOS scheduler
 
+  mutex = xSemaphoreCreateMutex();
+  queue = xQueueCreate(15, sizeof(uint16_t));
+  mailbox = xQueueCreate(1, sizeof(queue_data_t));
+
+  // xTaskCreate(measureTask, "measure", configMINIMAL_STACK_SIZE * 2, NULL, 2, NULL);
+  // xTaskCreate(commTask, "comm", configMINIMAL_STACK_SIZE * 2, NULL, 1, NULL);
+
+  xTaskCreate(measureTask_1, "measure", configMINIMAL_STACK_SIZE * 2, NULL, 2, NULL);
+  xTaskCreate(commTask_1, "comm", configMINIMAL_STACK_SIZE * 2, NULL, 1, NULL);
+
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+
+  /* Call init function for freertos objects (in cmsis_os2.c) */
+
+  /* Start scheduler */
+  
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+	HAL_TIM_Base_Start_IT(&htim6);
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&measurement, 1);
+
+  vTaskStartScheduler();
+
 	while (1) {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+    printf("Measured value: %u, time: %lu\r\n", measurement, HAL_GetTick());
+
+    HAL_Delay(1000);
 	}
   /* USER CODE END 3 */
 }
@@ -169,7 +300,13 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -188,6 +325,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
   /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
@@ -198,26 +336,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_ADC;
-  PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
-  PeriphClkInit.AdcClockSelection = RCC_ADCCLKSOURCE_PLLSAI1;
-  PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_HSI;
-  PeriphClkInit.PLLSAI1.PLLSAI1M = 1;
-  PeriphClkInit.PLLSAI1.PLLSAI1N = 8;
-  PeriphClkInit.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
-  PeriphClkInit.PLLSAI1.PLLSAI1Q = RCC_PLLQ_DIV2;
-  PeriphClkInit.PLLSAI1.PLLSAI1R = RCC_PLLR_DIV2;
-  PeriphClkInit.PLLSAI1.PLLSAI1ClockOut = RCC_PLLSAI1_ADC1CLK;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Configure the main internal regulator output voltage
-  */
-  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -255,5 +373,3 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-
-/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
