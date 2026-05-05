@@ -84,7 +84,7 @@ enum QueueMessages {
 	QueueMsgNoData, QueueMsgNewData, QueueMsgNewDataChange,
 };
 
-uint16_t measurement;
+uint32_t measurement;
 uint8_t queueError = QueueOK;
 SemaphoreHandle_t mutex;
 QueueHandle_t queue;
@@ -98,7 +98,7 @@ void measureTask(void *args) {
 	for (;;) {
     BaseType_t xStatus = xQueueSendToBack(queue, &measurement, 0);
 
-    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    if (xSemaphoreTake(mutex, 10/portTICK_PERIOD_MS) == pdTRUE) {
         if (xStatus == pdPASS) {
             queueError = QueueOK;
         } else {
@@ -124,7 +124,7 @@ void measureTask_1(void *args) {
 
         xQueueOverwrite(mailbox, &data_to_send);
 
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1000));
+        vTaskDelayUntil(&xLastWakeTime, 1000/portTICK_PERIOD_MS);
     }
 }
 
@@ -150,7 +150,7 @@ void commTask(void *args) {
 
     xStatus = xQueueReceive(queue, &measurement_local, 0);
 
-    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    if (xSemaphoreTake(mutex, 10/portTICK_PERIOD_MS) == pdTRUE) {
       if (xStatus == pdPASS) {
         queueError = QueueOK;
       } else {
@@ -164,13 +164,13 @@ void commTask(void *args) {
       xSemaphoreGive(mutex);
     }
 
-    printf("time: %5lu, measured value: %4u, queue size %2u, error %u\r\n",
+    printf("time: %lu, measured value: %u, queue size %u, error %u\r\n",
            xTaskGetTickCount(), 
            measurement_local, 
            (unsigned int)queue_size, 
            flag_local);
 
-    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(histeresis));
+    vTaskDelayUntil(&xLastWakeTime, histeresis/portTICK_PERIOD_MS);
   }
 }
 
@@ -183,7 +183,7 @@ void commTask_1(void *args) {
         if (xQueuePeek(mailbox, &local_data, 0) == pdPASS) {
             
             if (local_data.counter > last_seen_counter) {
-                printf("time: %5lu, measured value: %4u, counter: %3lu\r\n",
+                printf("time: %lu, measured value: %u, counter: %lu\r\n",
                        xTaskGetTickCount(), local_data.measurement, local_data.counter);
                 last_seen_counter = local_data.counter;
             } else {
@@ -194,7 +194,7 @@ void commTask_1(void *args) {
             printf("Queue empty\r\n");
         }
 
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(400));
+        vTaskDelayUntil(&xLastWakeTime, 400/portTICK_PERIOD_MS);
     }
 }
 
@@ -258,9 +258,8 @@ int main(void)
   // xTaskCreate(measureTask, "measure", configMINIMAL_STACK_SIZE * 2, NULL, 2, NULL);
   // xTaskCreate(commTask, "comm", configMINIMAL_STACK_SIZE * 2, NULL, 1, NULL);
 
-  xTaskCreate(measureTask_1, "measure", configMINIMAL_STACK_SIZE * 2, NULL, 2, NULL);
   xTaskCreate(commTask_1, "comm", configMINIMAL_STACK_SIZE * 2, NULL, 1, NULL);
-
+  xTaskCreate(measureTask_1, "measure", configMINIMAL_STACK_SIZE * 2, NULL, 10, NULL);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -285,7 +284,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    printf("Measured value: %u, time: %lu\r\n", measurement, HAL_GetTick());
+    printf("Measured value: %lu, time: %lu\r\n", measurement, HAL_GetTick());
 
     HAL_Delay(1000);
 	}
